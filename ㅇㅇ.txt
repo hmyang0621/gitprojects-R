@@ -1,0 +1,576 @@
+install.packages("QuantPsyc")
+install.packages("dplyr")
+install.packages("car")
+install.packages("ggplot2")
+install.packages("ggpubr")
+library(dplyr)
+library(car)
+library(ggplot2)
+library(gvlma)
+library(ggpubr)
+
+
+setwd("C:/FASTCAMPUS/")
+train <- read.csv("train.csv",
+                  header = TRUE,
+                  stringsAsFactors = FALSE)
+
+### Data Handling----
+# 1. 결측치 조사----
+sum(is.na(train))
+colSums(is.na(train))
+
+# NA가 결측치가 아닌 colnames
+# Alley
+# BsmtQual
+# BsmtCond
+# BsmtExposure
+# BsmtFinType1
+# FireplaceQu
+# GarageType
+# GarageFinish
+# GarageQual
+# GarageCond
+# PoolQC
+# Fence
+# MiscFeature
+
+# 1) 결측치가 아닌 NA -> NONE으로 변환
+for(i in c("Alley", "BsmtQual", "BsmtCond", "BsmtExposure", "BsmtFinType2",
+           "BsmtFinType1", "FireplaceQu", "GarageType", "GarageFinish",
+           "GarageQual", "GarageCond", "PoolQC", "Fence", "MiscFeature")){
+  train[, i][(is.na(train[, i]))] <- "NONE"
+}
+
+
+sum(is.na(train))
+colSums(is.na(train))
+
+sum(is.na(train$LotFrontage))
+
+# 2) 결측치가 너무 많은 train$LotFrontage, 회귀분석에서 의미없는 id 제거
+train <- train[, -c(1, 4)]
+
+sum(is.na(train))
+colSums(is.na(train))
+
+# 추가로 GarageYrBlt 제거
+train$GarageYrBlt <- NULL
+sum(is.na(train))
+for(i in 1:ncol(train)){
+  if(sum(is.na(train[, i])) != 0){
+    cat(colnames(train)[i], " ")
+  }
+}
+has.NA.coln <- c("MasVnrType", "MasVnrArea", "Electrical")
+for(i in has.NA.coln){
+  cat(i, "열에 있는 NA의 개수는", sum(is.na(train[, i])), "입니다.", "\n")
+}
+
+# Complete.cases를 이용해 결측 포함 obs. 제거
+train <- train[complete.cases(train),]
+sum(is.na(train))
+
+str(train) # 1451 obs. of  78 variables
+
+# 2. factor, numeric변환----
+# dply::mutate_if
+train <- train %>% dplyr::mutate_if(is.character, as.factor) %>% dplyr::mutate_if(is.integer, as.numeric)
+str(train)
+
+# par(mfcol = c(1, 1))
+# p1 <- plot(train$MoSold, train$SalePrice,
+#      xlab = "MoSold",
+#      ylab = "SalePrice",
+#      main = "몇월에 판매된 지가 과연 numeric일까?")
+
+
+# 3. 변수 정리----
+# 새로운 reference 변수 new.train에 train data 할당
+new.train <- train
+
+# 1) 변수 : MoSold => 분기----
+#  (1) 구간지정 : cut()
+new.train$MoSold<- cut(new.train$MoSold,
+                       breaks = c(1, 4, 7, 10, 12+.1),
+                       right  = FALSE)
+str(new.train$MoSold)
+
+#  (2) 분기별로 level 재지정
+levels(new.train$MoSold) <- c("1st", "2nd", "3rd", "4th")
+
+#  (3) 시각화//
+options(scipen = 1000)
+
+ggplot(new.train, aes(x = MoSold, y = SalePrice, fill=MoSold)) + geom_bar(stat="identity")
++theme_minimal() + guides(fill=FALSE)
+# barplot(table(new.train$MoSold),
+#         col = rainbow(4),
+#         ylim = c(0, 1.2 * max(table(new.train$MoSold))),
+#         ylab = "monthly selling",
+#         xlab = "Quarter",
+#         main = "분기별 판매 빈도 비교(2분기가 최고)"
+# )
+
+
+# 2) 변수 제거 : RoofMatl, SaleType, SaleCondition, Street, Heating, Utilities----
+a <- ggplot(train, aes(x = RoofMatl, y = SalePrice, fill=RoofMatl)) + geom_bar(stat="identity") + theme_minimal() + guides(fill=FALSE)
+b <- ggplot(train, aes(x = SaleType, y = SalePrice, fill=SaleType)) + geom_bar(stat="identity") + theme_minimal() + guides(fill=FALSE)
+c <- ggplot(train, aes(x = SaleCondition, y = SalePrice, fill=SaleCondition)) + geom_bar(stat="identity") + theme_minimal() + guides(fill=FALSE)
+d <- ggplot(train, aes(x = Street, y = SalePrice, fill=Street)) + geom_bar(stat="identity") + theme_minimal() + guides(fill=FALSE)
+e <- ggplot(train, aes(x = Heating, y = SalePrice, fill=Heating)) + geom_bar(stat="identity") + theme_minimal() + guides(fill=FALSE)
+f <- ggplot(train, aes(x = Utilities, y = SalePrice, fill=Utilities)) + geom_bar(stat="identity") + theme_minimal() + guides(fill=FALSE)
+ggarrange(a, b, c, d, e, f + rremove("x.text"),
+          ncol = 3, nrow = 2)
+
+new.train[, c("RoofMatl", "SaleType", "SaleCondition", "Street", "Heating", "Utilities")] <- NULL
+#  MSSubClass : 제거
+# 이미 다른 변수들에서 거주 유형을 상세하게 쪼개어 놓음
+# ex. bsmt, exterior, lotarea 등등
+# 굳이 이 변수를 쓸 필요가 없음
+new.train$MSSubClass <- NULL
+
+
+
+
+
+# 3) 새로운 변수 만들기 : YrSold, YearBuilt, YearRemodAdd----
+
+par(mfrow = c(1, 3))
+plot(new.train$YrSold, new.train$SalePrice,
+     xlab = "YrSold",
+     ylab = "SalePrice",
+     main = "판매년도",
+     col = "red")
+plot(new.train$YearBuilt, new.train$SalePrice,
+     xlab = "YearBuilt",
+     ylab = "SalePrice",
+     main = "설립년도",
+     col = "blue")
+plot(new.train$YearRemodAdd, new.train$SalePrice,
+     xlab = "YearRemodAdd",
+     ylab = "SalePrice",
+     main = "리모델링년도",
+     col = "purple")
+# YearRemodAdd: Remodel date (same as construction date if no remodeling or additions)
+
+#  (1) Remod : 리모델링 유무(리모델링 했으면 1, 아니면 0)
+new.train$Remod <- new.train$YearRemodAdd - new.train$YearBuilt
+new.train$Remod <- ifelse(new.train$Remod > 0, 1, 0) 
+new.train$Remod <- as.factor(new.train$Remod)
+str(new.train$Remod)
+
+#  (2) SellYr : 지어진 후 어느정도 시간 경과 후 팔린지
+new.train$sellYr <- new.train$YrSold - new.train$YearBuilt
+str(new.train$sellYr)
+
+#  (3) 시각화
+par(mfrow = c(1,2))
+barplot(sort(table(new.train$Remod), decreasing = TRUE),
+        col = c("green", "orange"),
+        ylim = c(0, 1.1 * max(table(new.train$Remod))),
+        ylab = "degree",
+        xlab = "Remod O, X",
+        main = "Remod TF"
+)
+plot(new.train$sellYr, new.train$SalePrice,
+     xlab = "sellYr - builtYr",
+     ylab = "SalePrice",
+     ylim = c(0, 1.1 * max(new.train$SalePrice)),
+     main = "sell year after built",
+     col = "blue")
+
+#  (4) 사용한 변수 제거
+# YrSold, YearBuilt, YearRemodAdd 이 변수들은 새로운 변수들을 만드는 데 사용
+# 만들어진 변수는 이 3개의 변수를 이용하여 만들었으므로 당연히 선형관계가 있음
+new.train[, c("YrSold", "YearBuilt", "YearRemodAdd")] <- NULL
+par(mfrow = c(1,1))
+
+
+
+# 4) level 조정 : Functional, Condition1, Condition2, Exterior1st----
+levels(new.train$Functional) <- c("Maj", "Maj", "Min", "Min", "Mod", "Sev", "Typ")
+levels(new.train$Condition1) <- c("AdjSt", "AdjSt", "Norm", "RRN" , "RRN","Pos", "Pos", "RRS", "RRS")
+levels(new.train$Condition2) <- c("AdjSt", "AdjSt", "Norm", "RRN" , "RRN","Pos", "Pos", "RRS")
+levels(new.train$Exterior1st) <- c("Shingles", "Shingles", "Brick", "Brick", "Brick", "Board", "Board", "Other", "Metal", "Wood", "Other", "Other", "Vinyl", "Wood", "Wood")
+
+# level 바꾸기 전 
+a <- ggplot(train, aes(x=Functional, y=SalePrice, fill=Functional)) + geom_bar(stat="identity")+theme_minimal() + guides(fill=FALSE)
+b <- ggplot(train, aes(x=Condition1, y=SalePrice, fill=Condition1)) + geom_bar(stat="identity")+theme_minimal() + guides(fill=FALSE)
+c <- ggplot(train, aes(x=Condition2, y=SalePrice, fill=Condition2)) + geom_bar(stat="identity")+theme_minimal() + guides(fill=FALSE)
+d <- ggplot(train, aes(x=Exterior1st, y=SalePrice, fill=Exterior2nd)) + geom_bar(stat="identity")+theme_minimal() + guides(fill=FALSE)
+
+# level 바꾸기 후 
+options(scipen = 1000)
+aa <- ggplot(new.train, aes(x=Functional, y=SalePrice, fill=Functional)) + geom_bar(stat="identity")+theme_minimal() + guides(fill=FALSE)
+bb <- ggplot(new.train, aes(x=Condition1, y=SalePrice, fill=Condition1)) + geom_bar(stat="identity")+theme_minimal() + guides(fill=FALSE)
+cc <- ggplot(new.train, aes(x=Condition2, y=SalePrice, fill=Condition2)) + geom_bar(stat="identity")+theme_minimal() + guides(fill=FALSE)
+dd <- ggplot(new.train, aes(x=Exterior1st, y=SalePrice, fill=Exterior1st)) + geom_bar(stat="identity")+theme_minimal() + guides(fill=FALSE)
+
+
+ggpubr::ggarrange(a, b, c, d, aa, bb, cc, dd,
+                  ncol = 4, nrow = 2)
+
+
+str(new.train$Exterior2nd)
+
+# 5) 기타 변수처리----
+#  (1) Exterior1st, Exterior2nd : Exterior2nd 제거
+par(mfrow = c(1,2))
+for(i in grep("Exterior", colnames(new.train))){
+  barplot(sort(table(new.train[, colnames(new.train)[i]]), decreasing = T),
+          col = rainbow(10),
+          ylim = c(0, 1.2 * max(sort(table(new.train[, colnames(new.train)[i]])))),
+          xlab = colnames(new.train)[i],
+          ylab = "freq",
+          main = paste(colnames(new.train)[i])
+  )
+} 
+#  (2) LandSlope, LandContour
+# LandContour, Landslope : Landslope 제거
+str(new.train[, grep("Land", colnames(new.train))])
+sort(table(new.train$LandContour), decreasing = T)
+sort(table(new.train$LandSlope), decreasing = T)
+
+new.train[, c("Landslope", "Exterior2nd")] <- NULL
+
+#  (3) OpenPorchSF, EnclosedPorch, X3SsnPorch, ScreenPorch : 제거
+#   Porch종류에 따라 너비 나누어서 나타낸 것
+#   다 더한 후 TotalPorch로 한번에 표시
+new.train$TotalPorch <- new.train$OpenPorchSF + new.train$EnclosedPorch + new.train$X3SsnPorch + new.train$ScreenPorch
+porch.delete <- grep("Porch", colnames(new.train), value = T)[1:4]
+new.train[,porch.delete] <- NULL
+
+#  (4) BsmtFinSF1, BsmtFinSF2, BsmtUnfSF : 제거
+#   TotalBsmtSF 변수를 나눈 것
+#   TotalBsmtSF 빼고 다 제거
+new.train[, c("BsmtFinSF1", "BsmtFinSF2", "BsmtUnfSF")] <- NULL
+
+
+#  (5) X1stFlrSF + X2ndFlrSF : 제거 
+#   GrLivArea 변수를 층별로 나눈 것
+#   GrLivArea 빼고 다 제거
+new.train[, c("X1stFlrSF", "X2ndFlrSF")] <- NULL
+
+#  (6) BsmtFullBath, BsmtHalfBath, FullBath, HalfBath
+#   Bathroom 수를 나눈 것
+#   TotalBath 생성 후 나머지 다 제거
+new.train$TotalBath <- new.train$BsmtFullBath + new.train$BsmtHalfBath + new.train$FullBath + new.train$HalfBath
+new.train[, c("BsmtFullBath", "BsmtHalfBath", "FullBath", "HalfBath")] <- NULL
+
+
+
+
+#  (5) BsmtQual : BsmtHeight 으로 이름변환
+colnames(new.train)[24] <- "BsmtHeight"
+
+
+
+# 6) 더미변수 생성----
+# 1. BsmtCond
+new.train$BsmtCond.Po <- ifelse(new.train$BsmtCond == "Po", 1, 0)
+new.train$BsmtCond.TA <- ifelse(new.train$BsmtCond == "TA", 1, 0)
+new.train$BsmtCond.GD <- ifelse(new.train$BsmtCond == "GD", 1, 0)
+new.train$BsmtCond <- NULL
+
+# 2. BsmtFinType1
+new.train$BsmtFinType1.BLQ <- ifelse(new.train$BsmtFinType1 == "BLQ", 1, 0)
+new.train$BsmtFinType1.GLQ <- ifelse(new.train$BsmtFinType1 == "GLQ", 1, 0)
+new.train$BsmtFinType1.LwQ <- ifelse(new.train$BsmtFinType1 == "LwQ", 1, 0)
+new.train$BsmtFinType1.Rec <- ifelse(new.train$BsmtFinType1 == "Rec", 1, 0)
+new.train$BsmtFinType1.Unf <- ifelse(new.train$BsmtFinType1 == "Unf", 1, 0)
+new.train$BsmtFinType1 <- NULL
+# 3. GarageFinish
+new.train$GarageFinish.RFn <- ifelse(new.train$GarageFinish == "RFn", 1, 0)
+new.train$GarageFinish.Unf <- ifelse(new.train$GarageFinish == "Unf", 1, 0)
+new.train$GarageFinish <- NULL
+# 4. GarageQual
+new.train$GarageQual.Fa <- ifelse(new.train$GarageQual == "Fa", 1, 0)
+new.train$GarageQual.Gd <- ifelse(new.train$GarageQual == "Gd", 1, 0)
+new.train$GarageQual.Po <- ifelse(new.train$GarageQual == "Po", 1, 0)
+new.train$GarageQual.TA <- ifelse(new.train$GarageQual == "TA", 1, 0)
+new.train$GarageQual <- NULL
+# 5. GarageCond
+new.train$GarageCond.Fa <- ifelse(new.train$GarageCond == "Fa", 1, 0)
+new.train$GarageCond.Gd <- ifelse(new.train$GarageCond == "Gd", 1, 0)
+new.train$GarageCond.Po <- ifelse(new.train$GarageCond == "Po", 1, 0)
+new.train$GarageCond.TA <- ifelse(new.train$GarageCond == "TA", 1, 0)
+new.train$GarageCond <- NULL
+# NA 나오는 거 제거
+new.train$BsmtCond.GD <- NULL
+
+colnames(new.train)
+str(new.train)
+### Multiple Regression----
+# 4. 회귀분석1----
+lm.test <- lm(SalePrice~., data = new.train)
+summary(lm.test) # Adjusted R-squared:  0.9037
+#step(lm.test, direction = "forward")  # AIC=29512.34
+#step(lm.test, direction = "backward") # AIC=29455.13
+step(lm.test, direction = "both")     # AIC=29455.13
+
+# 1번째 stepwise 결과
+# lm(formula = SalePrice ~ MSZoning + LotArea + LandContour + LotConfig + 
+#      LandSlope + Neighborhood + Condition1 + Condition2 + BldgType + 
+#      OverallQual + OverallCond + Exterior1st + MasVnrType + MasVnrArea + 
+#      ExterQual + ExterCond + BsmtHeight + BsmtExposure + TotalBsmtSF + 
+#      LowQualFinSF + GrLivArea + BedroomAbvGr + KitchenAbvGr + 
+#      KitchenQual + TotRmsAbvGrd + Functional + Fireplaces + FireplaceQu + 
+#      GarageCars + GarageArea + WoodDeckSF + PoolArea + PoolQC + 
+#      MiscFeature + Remod + sellYr + BsmtFinType1.GLQ + BsmtFinType1.Unf + 
+#      GarageFinish.RFn + GarageQual.Fa + GarageQual.Gd + GarageQual.Po + 
+#      GarageQual.TA + GarageCond.Fa + GarageCond.Gd + GarageCond.Po + 
+#      GarageCond.TA + TotalBath, data = new.train)
+
+
+
+# 5. 회귀분석2----
+new.train2 <- new.train[, c("SalePrice",  "MSZoning", "LotArea", "LandContour", "LotConfig", 
+                            "LandSlope", "Neighborhood", "Condition1", "Condition2", "BldgType", 
+                            "OverallQual", "OverallCond", "Exterior1st", "MasVnrType", "MasVnrArea", 
+                            "ExterQual", "ExterCond", "BsmtQual", "BsmtHeight", "TotalBsmtSF", 
+                            "LowQualFinSF", "GrLivArea", "BedroomAbvGr", "KitchenAbvGr", 
+                            "KitchenQual", "TotRmsAbvGrd", "Functional", "Fireplaces", "FireplaceQu",
+                            "GarageCars", "GarageArea", "WoodDeckSF", "PoolArea", "PoolQC", 
+                            "MiscFeature", "Remod", "sellYr", "TotalBath", "BsmtFinType1.GLQ", 
+                            "BsmtFinType1.Unf", "GarageFinish.RFn", "GarageQual.Fa", "GarageQual.Gd",
+                            "GarageQual.Po", "GarageQual.TA", "GarageCond.Fa", "GarageCond.Gd", 
+                            "GarageCond.Po", "GarageCond.TA")]
+# 1) Factor => Dummy----
+# 1. MSZoning
+new.train2$MSZoning.FV <- ifelse(new.train2$MSZoning == "FV", 1, 0)
+new.train2$MSZoning.RH <- ifelse(new.train2$MSZoning == "RH", 1, 0)
+new.train2$MSZoning.RM <- ifelse(new.train2$MSZoning == "RM", 1, 0)
+new.train2$MSZoning.FV <- ifelse(new.train2$MSZoning == "FV", 1, 0)
+new.train2$MSZoning    <- NULL
+# MSZoningFV           3.415e+04  1.203e+04   2.840 0.004587 ** 
+# MSZoningRH           2.569e+04  1.189e+04   2.160 0.030941 *  
+# MSZoningRL           2.906e+04  9.972e+03   2.915 0.003622 ** 
+# MSZoningRM           2.671e+04  9.337e+03   2.861 0.004287 **
+
+
+# 2. LandContour
+new.train2$LandContour.HLS <- ifelse(new.train2$LandContour == "HLS", 1, 0)
+new.train2$LandContour.Lvl <- ifelse(new.train2$LandContour == "Lvl", 1, 0)
+new.train2$LandContour     <- NULL
+# LandContourHLS       1.182e+04  5.188e+03   2.279 0.022826 *  
+# LandContourLvl       9.018e+03  3.691e+03   2.443 0.014693 *  
+
+# 3. LandSlope
+# levels(new.train2$LandSlope)
+new.train2$LandSlope.Sev <- ifelse(new.train2$LandSlope == "Sev", 1, 0)
+new.train2$LandSlope     <- NULL
+# LandSlopeSev        -2.494e+04  9.399e+03  -2.653 0.008072 ** 
+
+# 4. Neighborhood
+# levels(new.train2$Neighborhood)
+new.train2$Neighborhood.Edwards <- ifelse(new.train2$Neighborhood == "Edwards", 1, 0)
+new.train2$Neighborhood.NAmes   <- ifelse(new.train2$Neighborhood == "NAmes", 1, 0)
+new.train2$Neighborhood.NoRidge <- ifelse(new.train2$Neighborhood == "NoRidge", 1, 0)
+new.train2$Neighborhood.NridgHt <- ifelse(new.train2$Neighborhood == "NridgHt", 1, 0)
+new.train2$Neighborhood.NWAmes  <- ifelse(new.train2$Neighborhood == "NWAmes", 1, 0)
+new.train2$Neighborhood.StoneBr <- ifelse(new.train2$Neighborhood == "StoneBr", 1, 0)
+new.train2$Neighborhood         <- NULL
+# NeighborhoodEdwards -2.217e+04  8.241e+03  -2.690 0.007226 ** 
+# NeighborhoodNAmes   -1.586e+04  8.027e+03  -1.976 0.048369 *  
+# NeighborhoodNoRidge  3.296e+04  8.662e+03   3.805 0.000148 ***
+# NeighborhoodNridgHt  2.096e+04  7.805e+03   2.686 0.007329 ** 
+# NeighborhoodNWAmes  -1.655e+04  8.253e+03  -2.006 0.045104 *  
+# NeighborhoodStoneBr  4.351e+04  8.569e+03   5.077 4.38e-07 ***
+
+# 5. Condition1, Condition2
+new.train2$Condition1.Norm <- ifelse(new.train2$Condition1 == "Norm", 1, 0)
+new.train2$Condition1      <- NULL
+new.train2$Condition2.RRN  <- ifelse(new.train2$Condition2 == "RRN", 1, 0)
+new.train2$Condition2      <- NULL
+# Condition1Norm       9.924e+03  2.583e+03   3.841 0.000128 ***
+# Condition2RRN       -1.410e+05  1.936e+04  -7.286 5.46e-13 ***
+
+# 6. BldgType
+# levels(new.train2$BldgType)
+new.train2$BldgType.Duplex <- ifelse(new.train2$BldgType == "Duplex", 1, 0)
+new.train2$BldgType.Twnhs  <- ifelse(new.train2$BldgType == "Twnhs", 1, 0)
+new.train2$BldgType.TwnhsE <- ifelse(new.train2$BldgType == "TwnhsE", 1, 0)
+new.train2$BldgType        <- NULL
+# BldgTypeDuplex      -1.794e+04  6.009e+03  -2.985 0.002889 ** 
+# BldgTypeTwnhs       -3.207e+04  5.554e+03  -5.774 9.64e-09 ***
+# BldgTypeTwnhsE      -2.301e+04  3.799e+03  -6.056 1.82e-09 ***
+
+# 7. Exterior1st
+new.train2$Exterior1st.Brick <- ifelse(new.train2$Exterior1st == "Brick", 1, 0)
+new.train2$Exterior1st       <- NULL
+# Exterior1stBrick     1.861e+04  6.853e+03   2.715 0.006717 ** 
+
+# 8. MasVnrType
+# levels(new.train2$MasVnrType)
+new.train2$MasVnrType.Stone <- ifelse(new.train2$MasVnrType == "Stone", 1, 0)
+new.train2$MasVnrType <- NULL
+# MasVnrTypeStone      1.704e+04  7.450e+03   2.287 0.022341 *  
+
+# 9. ExterQual
+# levels(new.train2$ExterQual)
+new.train2$ExterQual.Fa <- ifelse(new.train2$ExterQual == "Fa", 1, 0)
+new.train2$ExterQual.Gd <- ifelse(new.train2$ExterQual == "Gd", 1, 0)
+new.train2$ExterQual.TA <- ifelse(new.train2$ExterQual == "TA", 1, 0)
+new.train2$ExterQual    <- NULL
+# ExterQualFa         -2.301e+04  9.785e+03  -2.352 0.018827 *  
+# ExterQualGd         -2.600e+04  4.988e+03  -5.213 2.15e-07 ***
+# ExterQualTA         -2.937e+04  5.444e+03  -5.395 8.10e-08 ***
+
+# 10. ExterCond
+# levels(new.train2$ExterCond)
+new.train2$ExterCond.Fa <- ifelse(new.train2$ExterCond == "Fa", 1, 0)
+new.train2$ExterCond.Gd <- ifelse(new.train2$ExterCond == "Gd", 1, 0)
+new.train2$ExterCond.TA <- ifelse(new.train2$ExterCond == "TA", 1, 0)
+new.train2$ExterCond    <- NULL
+# ExterCondFa         -5.548e+04  1.680e+04  -3.303 0.000982 ***
+# ExterCondGd         -6.322e+04  1.577e+04  -4.009 6.44e-05 ***
+# ExterCondTA         -5.815e+04  1.573e+04  -3.696 0.000228 ***
+
+# 11. BsmtHeight
+# levels(new.train2$BsmtHeight)
+new.train2$BsmtHeight.Fa <- NULL
+new.train2$BsmtHeight.Gd <- ifelse(new.train2$BsmtHeight == "Gd", 1, 0)
+new.train2$BsmtHeight.TA <- NULL
+new.train2$BsmtHeight    <- NULL
+# BsmtHeightFa        -1.480e+04  6.307e+03  -2.347 0.019070 *  
+# BsmtHeightGd        -2.360e+04  3.422e+03  -6.895 8.30e-12 ***
+# BsmtHeightTA        -2.055e+04  4.194e+03  -4.899 1.08e-06 ***
+
+# 12. BsmtExposure
+# levels(new.train2$BsmtExposure)
+# new.train2$BsmtExposure.Gd <- ifelse(new.train2$BsmtExposure == "Gd", 1, 0)
+# new.train2$BsmtExposure.No <- ifelse(new.train2$BsmtExposure == "No", 1, 0)
+# new.train2$BsmtExposure    <- NULL
+# BsmtExposureGd       1.698e+04  3.079e+03   5.516 4.16e-08 ***
+# BsmtExposureNo      -4.932e+03  2.098e+03  -2.351 0.018856 *  
+
+# 13. KitchenQual
+# levels(new.train$KitchenQual)
+new.train2$KitchenQual.Fa <- ifelse(new.train2$KitchenQual == "Fa", 1, 0)
+new.train2$KitchenQual.Gd <- ifelse(new.train2$KitchenQual == "Gd", 1, 0)
+new.train2$KitchenQual.TA <- ifelse(new.train2$KitchenQual == "TA", 1, 0)
+new.train2$KitchenQual    <- NULL
+# KitchenQualFa       -1.797e+04  6.082e+03  -2.954 0.003191 ** 
+# KitchenQualGd       -2.019e+04  3.600e+03  -5.609 2.48e-08 ***
+# KitchenQualTA       -1.975e+04  4.013e+03  -4.922 9.62e-07 ***
+# 14. Functional
+# levels(new.train$Functional)
+new.train2$Functional.Sev <- ifelse(new.train2$Functional == "Sev", 1, 0)
+new.train2$Functional.Typ <- ifelse(new.train2$Functional == "Typ", 1, 0)
+new.train2$Functional      <- NULL
+# FunctionalSev       -6.683e+04  2.730e+04  -2.448 0.014489 *  
+# FunctionalTyp        1.421e+04  6.445e+03   2.205 0.027654 *  
+
+# 15. PoolQC
+# levels(new.train$PoolQC)
+new.train2$PoolQC.Fa   <- ifelse(new.train2$PoolQC == "Fa", 1, 0)
+new.train2$PoolQC.Gd   <- ifelse(new.train2$PoolQC == "Gd", 1, 0)
+new.train2$PoolQC.NONE <- ifelse(new.train2$PoolQC == "NONE", 1, 0)
+new.train2$PoolQC       <- NULL
+# PoolQCFa            -3.567e+05  3.550e+04 -10.047  < 2e-16 ***
+# PoolQCGd            -4.102e+05  2.594e+04 -15.812  < 2e-16 ***
+# PoolQCNONE           1.060e+06  8.416e+04  12.593  < 2e-16 ***
+
+# 16. MiscFeature
+# levels(new.train$MiscFeature)
+new.train2$MiscFeature.TenC <- ifelse(new.train2$MiscFeature == "TenC", 1, 0)
+new.train2$MiscFeature      <- NULL
+# MiscFeatureTenC      2.615e+05  4.530e+04   5.773 9.67e-09 ***
+
+colnames(new.train2)
+
+lm.test2 <- lm(SalePrice~., data = new.train2)
+summary(lm.test2) # Adjusted R-squared:  0.9006
+
+#step(lm.test2, direction = "forward")  # AIC=29464.02
+#step(lm.test2, direction = "backward") # AIC=29461.65
+#step(lm.test2, direction = "both")     # AIC=29461.65
+
+# 2번째 stepwise 결과
+new.train3 <- new.train2[,c("SalePrice", "LotArea", "LotConfig", "OverallQual", 
+                            "OverallCond", "MasVnrArea", "BsmtQual", "TotalBsmtSF", "LowQualFinSF", 
+                            "GrLivArea", "BedroomAbvGr", "KitchenAbvGr", "TotRmsAbvGrd", 
+                            "Fireplaces", "FireplaceQu", "GarageCars", "GarageArea", "WoodDeckSF", 
+                            "PoolArea", "Remod", "sellYr", "TotalBath", "BsmtFinType1.Unf", 
+                            "GarageFinish.RFn", "GarageQual.Fa", "GarageQual.Gd", "GarageQual.Po", 
+                            "GarageQual.TA", "GarageCond.Fa", "GarageCond.Gd", "GarageCond.Po", 
+                            "GarageCond.TA", "MSZoning.FV", "MSZoning.RM", "LandContour.HLS", 
+                            "LandContour.Lvl", "LandSlope.Sev", "Neighborhood.Edwards", 
+                            "Neighborhood.NAmes", "Neighborhood.NoRidge", "Neighborhood.NridgHt", 
+                            "Neighborhood.NWAmes", "Neighborhood.StoneBr", "Condition1.Norm", 
+                            "Condition2.RRN", "BldgType.Duplex", "BldgType.Twnhs", "BldgType.TwnhsE",                             "Exterior1st.Brick", "MasVnrType.Stone", "ExterQual.Fa", "ExterQual.Gd", 
+                            "ExterQual.TA", "ExterCond.Fa", "ExterCond.Gd", "ExterCond.TA", 
+                            "BsmtHeight.Gd", "KitchenQual.Fa", "KitchenQual.Gd", "KitchenQual.TA", 
+                            "Functional.Sev", "Functional.Typ", "PoolQC.Fa", "PoolQC.Gd", 
+                            "PoolQC.NONE", "MiscFeature.TenC")]
+
+
+new.train3[, c("LotConfig", "FireplaceQu", "GarageCars", "WoodDeckSF", "LandContour.Lvl","BsmtExposure.No", "BsmtQualNONE", "BsmtFinType1.GLQ", "MSZoning.FV")] <- NULL
+
+# 6. 회귀분석3----
+lm.test3 <- lm(SalePrice~., data = new.train3)
+summary(lm.test3) # Adjusted R-squared: 0.8981
+
+#step(lm.test3, direction = "forward")  # AIC=29471.17
+#step(lm.test3, direction = "backward") # AIC=29471.17
+#step(lm.test3, direction = "both")     # AIC=29471.17
+
+lm.final <- lm.test3
+car::vif(lm.final)>10
+
+# 다중공선성 의심되는 변수들
+# BsmtQual
+# PoolArea
+# GarageQual.Fa
+# GarageQual.Gd
+# GarageQual.TA
+# GarageCond.Fa
+# GarageCond.Gd
+# GarageCond.Po
+# GarageCond.TA
+# ExterQual.Gd
+# ExterQual.TA
+# ExterCond.Gd
+# ExterCond.TA 
+# PoolQC.NONE
+
+
+### Final Model Check----
+# 공선성 의심변수 제거
+new.train3[, c("BsmtQual",
+               "PoolArea",
+               "GarageQual.Fa",
+               "GarageQual.Gd",
+               "GarageQual.TA",
+               "GarageCond.Fa",
+               "GarageCond.Gd",
+               "GarageCond.Po",
+               "GarageCond.TA",
+               "ExterQual.Gd",
+               "ExterQual.TA",
+               "ExterCond.Gd",
+               "ExterCond.TA",
+               "PoolQC.NONE" )] <- NULL
+
+lm.test3 <- lm(SalePrice~., data = new.train3)
+summary(lm.test3) # Adjusted R-squared:  0.8643 
+#step(lm.test3, direction = "forward")  # AIC=29821.28
+#step(lm.test3, direction = "backward") # AIC=29811.47
+#step(lm.test3, direction = "both")     # AIC=29811.47
+
+
+new.train3[ ,c("LowQualFinSF", "Remod", "GarageQual.Po", "ExterQual.Fa", "ExterCond.Fa", "PoolQC.Fa", "MiscFeature.TenC")] <- NULL
+
+lm.final <- lm(SalePrice~., data = new.train3)
+summary(lm.final)
+vif(lm.final)
+
+#7. 최종 모형----
+# QuantPsyc::lm.beta(최종모형)
+QuantPsyc::lm.beta(lm.final)
+abs(QuantPsyc::lm.beta(lm.final))
+round(sort(abs(QuantPsyc::lm.beta(lm.final)), decreasing = TRUE), digits = 3)
+
+gvlma.result <- gvlma::gvlma(lm.final)
+summary(gvlma.result)
